@@ -1,0 +1,130 @@
+2 class: Audio + gui
+
+class AudioSender:
+
+    def __init__(self, gui):
+        # Khởi tạo trạng thái của AudioSender
+        # Lưu reference đến GUI
+        # Tạo queue
+        # Tạo encoder
+        # Tạo AES
+        # Tạo socket
+        # ...
+
+    def audio_callback(self, indata, frames, time_info, status):
+        # Nhận PCM từ microphone
+        # Đưa PCM vào queue
+        # ...
+
+    def start(self, dest_ip, dest_port, device, bitrate):
+        # Khởi động sender
+        # Mở microphone
+        # Tạo sender thread
+        # ...
+
+    def sender_loop(self, dest_ip, dest_port):
+        # Lấy PCM từ queue
+        # Opus encode
+        # AES encrypt
+        # Tạo packet
+        # UDP send
+        # Cập nhật statistics
+        # Gửi statistics cho GUI
+        # ...
+
+    def stop(self):
+        # Dừng stream
+        # Dừng thread
+        # Đóng socket
+        # Dọn tài nguyên
+        # ...
+
+class SenderGUI:
+
+    def __init__(self, root):
+        # Lưu root
+        # Tạo AudioSender
+        # Khởi tạo biến GUI
+        # Dựng UI
+        # Quét microphone
+        # ...
+
+    def build_ui(self):
+        # Label
+        # Button
+        # Slider
+        # Entry
+        # Frame
+        # ...
+
+    def change_volume(self, value):
+        # Xử lý volume slider
+
+    def refresh_devices(self):
+        # Quét microphone
+
+    def get_selected_device(self):
+        # Lấy microphone đang chọn
+
+    def start_sender(self):
+        # Lấy IP
+        # Lấy port
+        # Lấy device
+        # Lấy bitrate
+        # Gọi AudioSender.start()
+
+    def stop_sender(self):
+        # Gọi AudioSender.stop()
+
+    def update_stats(
+        self,
+        seq,
+        opus_size,
+        packet_size,
+        interval_ms,
+        encode_ms,
+        send_ms,
+        queue_size,
+        pcm_size,
+        total_frames,
+        total_bytes
+    ):
+        # Cập nhật các label thống kê
+
+    def set_status(self, status):
+        # Cập nhật trạng thái
+
+    def set_buttons(self, running):
+        # Enable/disable button
+
+    def log(self, message):
+        # Ghi log vào GUI
+
+    def request_stop_from_error(self):
+        # Xử lý yêu cầu dừng do lỗi
+
+    def on_close(self):
+        # Dừng AudioSender
+        # Đóng GUI
+
+           uav_speaker_sender_gui.py
+                       │
+                       │ tạo
+                       ▼
+                 ┌───────────┐
+                 │ SenderGUI │
+                 └─────┬─────┘
+                       │
+                       │ tạo
+                       ▼
+                ┌─────────────┐
+                │ AudioSender │
+                └─────────────┘
+
+                uav_audio_sender/
+│
+├── uav_speaker_sender_gui.py ← chạy chương trình
+├── config.py          ← cấu hình
+│
+├── audio_sender.py    ← class AudioSender
+└── sender_gui.py      ← class SenderGUI

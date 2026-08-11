@@ -1,0 +1,15 @@
+# Private config
+config.py
+
+# Python cache
+__pycache__/
+
+# VS Code
+.vscode/
+
+# Build / packaged files
+build/
+dist/
+
+# PyInstaller
+*.spec
