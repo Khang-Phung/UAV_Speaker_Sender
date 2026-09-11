@@ -1,0 +1,229 @@
+2 CLASS
+│
+├── AudioSender
+│   └── Xử lý toàn bộ audio + recording + loop + network
+│
+└── SenderGUI
+    └── Xử lý giao diện + điều khiển AudioSender
+
+AudioSender
+│
+├── __init__
+│   ├── Lưu reference đến GUI
+│   ├── Khởi tạo UDP socket
+│   ├── Khởi tạo Opus encoder
+│   ├── Khởi tạo AES-GCM
+│   ├── Tạo PCM queue cho LIVE
+│   ├── Tạo pcm_buffer
+│   ├── Tạo record_buffer
+│   ├── Khởi tạo sequence
+│   ├── Khởi tạo statistics
+│   └── Khởi tạo trạng thái:
+│       ├── running
+│       ├── recording
+│       └── looping
+│
+├── audio_callback
+│   ├── Nhận audio PCM từ microphone
+│   ├── Chuyển float32 → int16
+│   ├── Áp dụng volume
+│   │
+│   ├── Nếu RECORD:
+│   │   ├── Lưu PCM vào record_buffer
+│   │   └── Không gửi network
+│   │
+│   └── Nếu LIVE:
+│       └── Đưa PCM vào pcm_queue
+│
+├── init_network
+│   ├── Tạo UDP socket
+│   ├── Cấu hình UDP send buffer
+│   ├── Tạo Opus encoder
+│   ├── Thiết lập bitrate
+│   └── Reset statistics truyền
+│
+├── start
+│   └── VOICE LIVE
+│       ├── Khởi tạo UDP + Opus
+│       ├── Xóa dữ liệu cũ trong pcm_queue
+│       ├── Mở microphone
+│       ├── Đặt running = True
+│       ├── Tạo sender thread
+│       └── sender_loop()
+│
+├── start_recording
+│   └── RECORD
+│       ├── Xóa record_buffer cũ
+│       ├── Đặt recording = True
+│       ├── Mở microphone
+│       └── audio_callback()
+│           └── Chỉ lưu PCM vào record_buffer
+│
+├── stop_recording
+│   └── Dừng RECORD
+│       ├── Đặt recording = False
+│       ├── Đóng microphone stream
+│       ├── Tính số samples
+│       ├── Tính thời lượng recording
+│       └── Giữ nguyên record_buffer
+│
+├── start_loop
+│   └── LOOP
+│       ├── Kiểm tra record_buffer
+│       ├── Lấy IP / port / bitrate từ GUI
+│       ├── Khởi tạo UDP + Opus
+│       ├── Đặt looping = True
+│       ├── Tạo sender thread
+│       └── sender_loop()
+│
+├── stop_loop
+│   └── Dừng LOOP
+│       ├── Đặt looping = False
+│       └── Thread kết thúc
+│
+├── sender_loop
+│   ├── Xử lý chung cho LIVE và LOOP
+│   │
+│   ├── LOOP mode
+│   │   ├── Lấy PCM từ record_buffer
+│   │   ├── Chia thành frame 960 samples
+│   │   ├── Gửi từng frame
+│   │   ├── Chờ 20 ms
+│   │   └── Quay lại đầu recording
+│   │
+│   └── LIVE mode
+│       ├── Lấy PCM từ pcm_queue
+│       ├── Ghép vào pcm_buffer
+│       ├── Tách frame 960 samples
+│       └── Gửi từng frame
+│
+├── send_pcm_frame
+│   ├── Nhận PCM frame 960 samples
+│   ├── Opus encode
+│   ├── Tạo payload
+│   │   ├── Sequence 4 bytes
+│   │   ├── Reserved 8 bytes
+│   │   └── Opus payload
+│   ├── Tạo AES-GCM nonce
+│   ├── AES-GCM encrypt
+│   ├── Tạo UDP packet
+│   │   └── nonce + encrypted payload
+│   ├── UDP send
+│   ├── Cập nhật statistics
+│   └── Gửi statistics cho GUI
+│
+└── stop
+    └── Dừng tất cả
+        ├── running = False
+        ├── recording = False
+        ├── looping = False
+        ├── Dừng microphone
+        ├── Đóng UDP socket
+        ├── Giải phóng encoder
+        └── Không xóa record_buffer
+
+SenderGUI
+│
+├── __init__
+│   ├── Lưu root
+│   ├── Tạo AudioSender
+│   ├── Khởi tạo recording = False
+│   ├── Khởi tạo looping = False
+│   ├── Dựng UI
+│   └── Quét microphone
+│
+├── build_ui
+│   ├── IP Entry
+│   ├── Port Entry
+│   ├── Bitrate Entry
+│   ├── Microphone Combobox
+│   ├── Volume Slider
+│   ├── START button
+│   ├── STOP button
+│   ├── RECORD button
+│   ├── LOOP button
+│   ├── Status label
+│   ├── Status dot
+│   ├── Statistics
+│   └── Log
+│
+├── change_volume
+│   └── Thay đổi volume của AudioSender
+│
+├── refresh_devices
+│   └── Quét và cập nhật microphone
+│
+├── get_selected_device
+│   └── Lấy microphone đang chọn
+│
+├── toggle_record
+│   ├── Nếu chưa RECORD:
+│   │   ├── Gọi AudioSender.start_recording()
+│   │   ├── RECORD = ON
+│   │   ├── Disable START
+│   │   └── Enable STOP
+│   │
+│   └── Nếu đang RECORD:
+│       ├── Gọi AudioSender.stop_recording()
+│       ├── RECORD = OFF
+│       ├── Enable START
+│       ├── Enable LOOP
+│       └── Giữ recording buffer
+│
+├── start_loop
+│   ├── Gọi AudioSender.start_loop()
+│   ├── Disable START
+│   ├── Disable RECORD
+│   ├── Disable LOOP
+│   ├── Enable STOP
+│   └── Status = LOOPING
+│
+├── start_sender
+│   ├── Lấy IP
+│   ├── Lấy port
+│   ├── Lấy bitrate
+│   ├── Lấy microphone
+│   ├── Gọi AudioSender.start()
+│   ├── Disable RECORD
+│   └── Disable LOOP
+│
+├── stop_sender
+│   ├── Nếu RECORD:
+│   │   └── AudioSender.stop_recording()
+│   │
+│   ├── Nếu LOOP:
+│   │   └── AudioSender.stop_loop()
+│   │
+│   └── Nếu LIVE:
+│       └── AudioSender.stop()
+│
+├── update_stats
+│   ├── Sequence
+│   ├── Opus size
+│   ├── Packet size
+│   ├── Send interval
+│   ├── Encode time
+│   ├── Send time
+│   ├── Queue size
+│   ├── PCM size
+│   ├── Total frames
+│   └── Total bytes
+│
+├── set_status
+│   ├── RUNNING
+│   ├── RECORDING
+│   ├── LOOPING
+│   └── STOPPED
+│
+├── set_buttons
+│   └── Enable / disable button
+│
+├── log
+│   └── Ghi message vào GUI
+│
+├── request_stop_from_error
+│   └── Yêu cầu GUI dừng khi AudioSender gặp lỗi
+│
+└── on_close
+    ├── Dừng AudioSender
+    └── Đóng GUI

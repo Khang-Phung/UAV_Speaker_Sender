@@ -4,7 +4,7 @@ import time
 import config
 import sounddevice as sd
 
-from audio_sender import AudioSender
+from audio_sender2 import AudioSender
 
 class SenderGUI:
     def __init__(self, root):
@@ -15,7 +15,8 @@ class SenderGUI:
         self.root.resizable(False, False)
 
         self.sender = AudioSender(self)
-
+        self.recording = False
+        self.looping = False
         self.build_ui()
         self.refresh_devices()
 
@@ -23,6 +24,7 @@ class SenderGUI:
             "WM_DELETE_WINDOW",
             self.on_close
         )
+
 
     def build_ui(self):
         main = ttk.Frame(
@@ -199,15 +201,21 @@ class SenderGUI:
             padx=10,
             pady=(10, 0)
         )
+        control_frame = ttk.Frame(
+            main
+        )
 
-        control_frame = ttk.Frame(main)
-        control_frame.pack(fill="x", pady=15)
+        control_frame.pack(
+            fill="x",
+            pady=15
+        )
 
         self.start_button = ttk.Button(
             control_frame,
             text="START",
             command=self.start_sender
         )
+
         self.start_button.pack(
             side="left",
             padx=(0, 10)
@@ -219,7 +227,33 @@ class SenderGUI:
             command=self.stop_sender,
             state="disabled"
         )
+
         self.stop_button.pack(
+            side="left",
+            padx=(0, 10)
+        )
+
+        self.recording = False
+
+        self.record_button = ttk.Button(
+            control_frame,
+            text="RECORD",
+            command=self.toggle_record
+        )
+
+        self.record_button.pack(
+            side="left",
+            padx=(0, 10)
+        )
+
+        self.loop_button = ttk.Button(
+            control_frame,
+            text="LOOP",
+            command=self.start_loop,
+            state="disabled"
+        )
+
+        self.loop_button.pack(
             side="left"
         )
 
@@ -228,6 +262,7 @@ class SenderGUI:
             text="Status: STOPPED",
             font=("Arial", 11, "bold")
         )
+
         self.status_label.pack(
             side="right"
         )
@@ -400,10 +435,88 @@ class SenderGUI:
         except Exception:
             return "default"
 
+
+    def toggle_record(self):
+        if self.recording:
+            self.sender.stop_recording()
+
+            self.recording = False
+
+            self.record_button.config(
+                text="RECORD"
+            )
+
+            self.start_button.config(
+                state="normal"
+            )
+
+            self.stop_button.config(
+                state="disabled"
+            )
+
+            self.loop_button.config(
+                state="normal"
+            )
+
+            self.set_status(
+                "STOPPED"
+            )
+
+        else:
+            device = self.get_selected_device()
+
+            self.sender.start_recording(device)
+            
+            self.recording = True
+
+            self.record_button.config(
+                text="RECORDING"
+            )
+
+            self.start_button.config(
+                state="disabled"
+            )
+
+            self.stop_button.config(
+                state="disabled"
+            )
+
+            self.loop_button.config(
+                state="disabled"
+            )
+
+            self.set_status(
+                "RECORDING"
+            )
+
+    def start_loop(self):
+        self.sender.start_loop()
+        self.looping = True
+        self.start_button.config(
+            state="disabled"
+        )
+
+        self.stop_button.config(
+            state="normal"
+        )
+
+        self.record_button.config(
+            state="disabled"
+        )
+
+        self.loop_button.config(
+            state="disabled"
+        )
+
+        self.set_status(
+            "LOOPING"
+        )   
+
     def start_sender(self):
         if self.sender.running:
             return
-
+        self.recording = False
+        self.looping = False
         ip = self.ip_var.get().strip()
         port_text = self.port_var.get().strip()
         bitrate_text = self.bitrate_var.get().strip()
@@ -441,11 +554,19 @@ class SenderGUI:
         device = self.get_selected_device()
 
         try:
-            self.sender.start(
+            self.sender.start_live(
                 ip,
                 port,
                 device,
                 bitrate
+            )
+
+            self.record_button.config(
+                state="disabled"
+            )
+
+            self.loop_button.config(
+                state="disabled"
             )
 
         except Exception as e:
@@ -455,7 +576,40 @@ class SenderGUI:
             )
 
     def stop_sender(self):
-        self.sender.stop()
+        if self.recording:
+            self.sender.stop_recording()
+
+            self.recording = False
+
+        elif self.looping:
+            self.sender.stop_loop()
+
+            self.looping = False
+
+        else:
+            # START live
+            self.sender.stop()
+
+        self.start_button.config(
+            state="normal"
+        )
+
+        self.stop_button.config(
+            state="disabled"
+        )
+
+        self.record_button.config(
+            state="normal",
+            text="RECORD"
+        )
+
+        self.loop_button.config(
+            state="normal"
+        )
+
+        self.set_status(
+            "STOPPED"
+        )
 
     def update_stats(
         self,
@@ -521,7 +675,7 @@ class SenderGUI:
             text=f"Status: {status}"
         )
 
-        if status == "RUNNING":
+        if status in ("RUNNING", "RECORDING", "LOOPING"):
             self.record_dot.pack(
                 side="right",
                 padx=(8, 0)
