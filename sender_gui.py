@@ -4,7 +4,7 @@ import time
 import config
 import sounddevice as sd
 
-from audio_sender2 import AudioSender
+from audio_sender import AudioSender
 
 class SenderGUI:
     def __init__(self, root):
