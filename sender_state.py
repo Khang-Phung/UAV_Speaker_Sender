@@ -6,4 +6,4 @@ class SenderState(Enum):
     RUNNING = auto() 
     RECORDING = auto() 
     LOOPING = auto()
-    DISCONNECTED = auto()
+    DISCONNECTED = auto()   

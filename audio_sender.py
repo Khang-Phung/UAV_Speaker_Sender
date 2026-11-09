@@ -9,8 +9,13 @@ import numpy as np
 import queue
 import threading
 import config
+from sender.input_filter import InputFilter, filter_recording, prepare_loop_pcm
 from sender_state import SenderState
+from sender.tcp_control import TcpControl
 
+# ==========================================================
+# AUDIO SENDER
+# ==========================================================
 
 class AudioSender:
     # Thời gian crossfade ở điểm nối của LOOP (ms)
@@ -67,11 +72,15 @@ class AudioSender:
         self.volume = 1.0
 
         # --------------------------------------------------
+        # Input filter (GUI có thể gán filter_enabled = True/False)
+        # --------------------------------------------------
+        self.filter_enabled = True
+        self.input_filter = None
+
+        # --------------------------------------------------
         # TCP
         # --------------------------------------------------
-        self.tcp_socket = None
-        self.tcp_thread = None
-        self.tcp_connected = False
+        self.tcp = TcpControl(self._on_tcp_message, self._on_tcp_disconnect)
 
     # ======================================================
     # GUI HELPERS (tránh gọi Tkinter trực tiếp từ thread khác)
@@ -200,6 +209,9 @@ class AudioSender:
             try:
                 self.init_network(bitrate)
 
+                # Filter mới cho mỗi phiên (reset state)
+                self.input_filter = InputFilter(config.RATE)
+
                 self.pcm_buffer = np.empty(0, dtype=np.int16)
 
                 while True:
@@ -319,6 +331,12 @@ class AudioSender:
                 self.record_buffer = np.empty(0, dtype=np.int16)
             self.record_chunks = []
 
+            # Lọc bản ghi 1 lần (LOOP sẽ phát lại bản đã lọc)
+            if self.filter_enabled and len(self.record_buffer) > 0:
+                self.record_buffer = filter_recording(
+                    self.record_buffer, config.RATE, config.FRAME_SIZE
+                )
+
             samples = len(self.record_buffer)
             duration = samples / config.RATE
 
@@ -326,47 +344,6 @@ class AudioSender:
                 f"Recording stopped | "
                 f"Samples={samples} | Duration={duration:.2f} s"
             )
-
-    # ======================================================
-    # LOOP BUFFER PREPARATION (cắt bội số frame + crossfade)
-    # ======================================================
-
-    def _prepare_loop_pcm(self, buf):
-        """
-        Trả về buffer có độ dài là bội số của FRAME_SIZE và nối vòng mượt:
-        phần đầu được trộn với phần đuôi tiếp theo (overlap-add), nên khi
-        quay lại index 0 không còn bước nhảy biên độ (tiếng 'tách').
-        """
-        fs = config.FRAME_SIZE
-        frame_count = len(buf) // fs
-
-        if frame_count == 0:
-            return np.empty(0, dtype=np.int16)
-
-        buf = buf[:frame_count * fs]
-
-        fade = int(config.RATE * self.LOOP_CROSSFADE_MS / 1000)
-
-        # Bản ghi quá ngắn -> bỏ crossfade
-        if frame_count < 4 or fade <= 0:
-            return buf.copy()
-
-        out_frames = (len(buf) - fade) // fs
-        if out_frames < 1:
-            return buf.copy()
-
-        out_len = out_frames * fs
-        out = buf[:out_len].astype(np.float32)
-
-        # Đoạn tiếp nối tự nhiên của điểm cuối `out`
-        tail = buf[out_len:out_len + fade].astype(np.float32)
-        fade = len(tail)
-
-        if fade > 0:
-            w = np.linspace(0.0, 1.0, fade, dtype=np.float32)
-            out[:fade] = out[:fade] * w + tail * (1.0 - w)
-
-        return np.clip(out, -32768, 32767).astype(np.int16)
 
     # ======================================================
     # START / STOP LOOP
@@ -385,7 +362,12 @@ class AudioSender:
                 dest_ip = self.gui.ip_var.get().strip()
                 bitrate = int(self.gui.bitrate_var.get().strip())
 
-                loop_pcm = self._prepare_loop_pcm(self.record_buffer)
+                loop_pcm = prepare_loop_pcm(
+                    self.record_buffer,
+                    config.FRAME_SIZE,
+                    config.RATE,
+                    self.LOOP_CROSSFADE_MS
+                )
                 if len(loop_pcm) == 0:
                     self._log("Cannot LOOP: recording shorter than 1 frame.")
                     return
@@ -502,6 +484,10 @@ class AudioSender:
             ):
                 pcm_frame = self.pcm_buffer[:frame_size]
                 self.pcm_buffer = self.pcm_buffer[frame_size:]
+
+                # Lọc noise (high-pass + gate)
+                if self.filter_enabled and self.input_filter:
+                    pcm_frame = self.input_filter.process(pcm_frame)
 
                 self.send_pcm_frame(pcm_frame, dest_ip, dest_port)
 
@@ -636,6 +622,7 @@ class AudioSender:
 
             self.sock = None
             self.encoder = None
+            self.input_filter = None
 
             self.state = SenderState.STOPPED
 
@@ -661,118 +648,35 @@ class AudioSender:
             elif self.state in (SenderState.RUNNING, SenderState.LOOPING):
                 self.stop()
 
-    # ======================================================
+       # ======================================================
     # TCP
     # ======================================================
 
-    def _close_tcp(self):
-        if self.tcp_socket is not None:
-            try:
-                self.tcp_socket.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-            try:
-                self.tcp_socket.close()
-            except OSError:
-                pass
-            self.tcp_socket = None
+    @property
+    def tcp_connected(self):
+        return self.tcp.connected
 
     def send_tcp_message(self, ip, port, message):
-        try:
-            # Đóng kết nối cũ nếu còn
-            self.tcp_connected = False
-            self._close_tcp()
+        return self.tcp.connect_and_send(ip, port, message)
 
-            self.tcp_socket = socket.create_connection((ip, port), timeout=2)
-            self.tcp_socket.settimeout(1)
-            self.tcp_connected = True
+    def _on_tcp_message(self, message):
+        """Chạy trong TCP thread: server gửi gì cũng dừng và về STOPPED."""
+        with self.lock:
+            self.stop_activity()
+            self.state = SenderState.STOPPED
+        self._set_gui_state(SenderState.STOPPED)
 
-            print(f"TCP connected: {ip}:{port}")
-
-            self.tcp_socket.sendall(message.encode("utf-8"))
-
-            print(f"TCP TX: {message}")
-
-            self.tcp_thread = threading.Thread(
-                target=self.tcp_receive_task,
-                daemon=True
-            )
-            self.tcp_thread.start()
-
-            print("TCP receive thread started")
-
-            return True
-
-        except (socket.timeout, ConnectionRefusedError, OSError) as e:
-            print(f"TCP send error: {e}")
-
-            self.tcp_connected = False
-            self._close_tcp()
-
-            return False
-
-    def tcp_receive_task(self):
-        print("TCP RX task started")
-
-        while self.tcp_connected:
-            try:
-                sock = self.tcp_socket
-                if sock is None:
-                    break
-
-                data = sock.recv(512)
-
-                if not data:
-                    print("TCP server disconnected")
-
-                    self.tcp_connected = False
-
-                    self.stop_activity()
-                    self.state = SenderState.DISCONNECTED
-                    self._set_gui_state(SenderState.DISCONNECTED)
-
-                    break
-
-                message = data.decode("utf-8", errors="ignore")
-
-                print(f"TCP RX: [{message}]")
-
-                # Dừng đúng cách (stream, socket, thread) rồi mới đặt STOPPED
-                self.stop_activity()
-                self.state = SenderState.STOPPED
-                self._set_gui_state(SenderState.STOPPED)
-
-            except socket.timeout:
-                continue
-
-            except OSError as e:
-                # disconnect() chủ động đóng socket
-                if not self.tcp_connected:
-                    break
-
-                print(f"TCP receive error: {e}")
-
-                self.tcp_connected = False
-
-                self.stop_activity()
-                self.state = SenderState.DISCONNECTED
-                self._set_gui_state(SenderState.DISCONNECTED)
-
-                break
-
-        print("TCP RX task stopped")
-
-    def disconnect(self):
-        # Báo cho receive thread dừng
-        self.tcp_connected = False
-
-        # Stop audio / UDP sender nếu đang chạy
-        self.stop_activity()
-
-        # Đóng TCP socket
-        self._close_tcp()
-
-        self.state = SenderState.DISCONNECTED
+    def _on_tcp_disconnect(self):
+        """Chạy trong TCP thread: server đóng hoặc lỗi socket."""
+        with self.lock:
+            self.stop_activity()
+            self.state = SenderState.DISCONNECTED
         self._set_gui_state(SenderState.DISCONNECTED)
 
+    def disconnect(self):
+        self.tcp.close()
+        with self.lock:
+            self.stop_activity()
+            self.state = SenderState.DISCONNECTED
+        self._set_gui_state(SenderState.DISCONNECTED)
         print("Disconnected")
